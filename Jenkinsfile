@@ -9,9 +9,7 @@ pipeline {
 
     stages {
         stage('Checkout') {
-            steps {
-                checkout scm
-            }
+            steps { checkout scm }
         }
 
         stage('Build & Push Images') {
@@ -21,38 +19,38 @@ pipeline {
                     usernamePassword(credentialsId: 'aws-secret-key', usernameVariable: 'DUMMY',                passwordVariable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
                     sh '''
-                    # THESE 3 LINES MUST BE FIRST — THIS IS THE FINAL FIX
-                    export AWS_ACCESS_KEY_ID
-                    export AWS_SECRET_ACCESS_KEY
+                    # THIS LINE IS THE MAGIC FIX — RELOAD ENV SO AWS CLI SEES THE VARIABLES
+                    set +o history
+                    export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
+                    export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
                     export AWS_DEFAULT_REGION=ap-south-1
 
-                    # Now login works perfectly
+                    # Now login WILL work
                     aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
-                    # Build
+                    # Build & Push
                     docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:frontend-${IMAGE_TAG}      ./src/frontend
                     docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:emailservice-${IMAGE_TAG} ./src/emailservice
                     docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:checkoutservice-${IMAGE_TAG} ./src/checkoutservice
 
-                    # Push
                     docker push ${ECR_REGISTRY}/${IMAGE_REPO}:frontend-${IMAGE_TAG}
                     docker push ${ECR_REGISTRY}/${IMAGE_REPO}:emailservice-${IMAGE_TAG}
                     docker push ${ECR_REGISTRY}/${IMAGE_REPO}:checkoutservice-${IMAGE_TAG}
+
+                    echo "ALL IMAGES PUSHED SUCCESSFULLY!"
                     '''
                 }
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Deploy') {
             steps {
                 sh '''
-                # Update image tags in your manifest
                 sed -i "s|image: .*frontend.*|image: ${ECR_REGISTRY}/${IMAGE_REPO}:frontend-${IMAGE_TAG}|" kubernetes-manifest-file.yaml
                 sed -i "s|image: .*emailservice.*|image: ${ECR_REGISTRY}/${IMAGE_REPO}:emailservice-${IMAGE_TAG}|" kubernetes-manifest-file.yaml
                 sed -i "s|image: .*checkoutservice.*|image: ${ECR_REGISTRY}/${IMAGE_REPO}:checkoutservice-${IMAGE_TAG}|" kubernetes-manifest-file.yaml
-
-                # Deploy
                 kubectl apply -f kubernetes-manifest-file.yaml
+                echo "DEPLOYED SUCCESSFULLY!"
                 '''
             }
         }
@@ -61,26 +59,16 @@ pipeline {
     post {
         success {
             script {
-                echo "Waiting for Load Balancer URL..."
                 timeout(time: 6, unit: 'MINUTES') {
                     waitUntil {
-                        script {
-                            def url = sh(script: "kubectl get svc frontend-external -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' --ignore-not-found || true", returnStdout: true).trim()
-                            return (url != "")
-                        }
+                        sh(script: "kubectl get svc frontend-external -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' --ignore-not-found", returnStdout: true).trim() != ""
                     }
                 }
-                def PUBLIC_URL = sh(script: "kubectl get svc frontend-external -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
-
-                echo "*******************************************************************"
-                echo "     YOUR FULL E-COMMERCE WEBSITE IS LIVE BRO!"
-                echo "     OPEN THIS LINK RIGHT NOW → http://${PUBLIC_URL}"
-                echo "     BOOKMARK IT → http://${PUBLIC_URL}"
-                echo "*******************************************************************"
+                def URL = sh(script: "kubectl get svc frontend-external -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
+                echo "YOUR E-COMMERCE SITE IS LIVE BRO!"
+                echo "OPEN THIS → http://${URL}"
+                echo "http://${URL}"
             }
-        }
-        failure {
-            echo "Something went wrong. Ping me, we fix in 30 seconds."
         }
     }
 }
