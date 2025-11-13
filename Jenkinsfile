@@ -16,17 +16,18 @@ pipeline {
 
         stage('Build & Push Images') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
-                                  credentialsId: 'aws-ecr-credentials',
-                                  accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                                  secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                // This works with the two separate credentials you already created
+                withCredentials([
+                    usernamePassword(credentialsId: 'access-key', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'DUMMY'),
+                    usernamePassword(credentialsId: 'aws-ecr-credentials', usernameVariable: 'DUMMY', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
                     sh '''
                     # Login to ECR
                     aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
-                    # Build and push the main services
+                    # Build and push the three services
                     docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:frontend-${IMAGE_TAG} ./src/frontend
-                    docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:emailservice-${IMAGE_TAG} ./src/emailservice
+                    docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:emailservice-${IMAGE_TAG} ./src/emailservice  
                     docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:checkoutservice-${IMAGE_TAG} ./src/checkoutservice
 
                     docker push ${ECR_REGISTRY}/${IMAGE_REPO}:frontend-${IMAGE_TAG}
@@ -53,18 +54,16 @@ pipeline {
     post {
         success {
             script {
-                echo "Waiting for your site to be live..."
                 timeout(time: 5, unit: 'MINUTES') {
                     waitUntil {
-                        def url = sh(script: "kubectl get svc frontend-external -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' --ignore-not-found", returnStdout: true).trim()
-                        return (url != "")
+                        sh(script: "kubectl get svc frontend-external -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' --ignore-not-found", returnStdout: true).trim() != ""
                     }
                 }
                 def URL = sh(script: "kubectl get svc frontend-external -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
                 echo "══════════════════════════════════════════════════════════"
-                echo "  YOUR FULL E-COMMERCE SITE IS NOW LIVE!"
+                echo "  YOUR FULL E-COMMERCE SITE IS LIVE!"
                 echo "  → http://${URL}"
-                echo "  Click or copy the link above!"
+                echo "  Open this link in your browser!"
                 echo "══════════════════════════════════════════════════════════"
             }
         }
