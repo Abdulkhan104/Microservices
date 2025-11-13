@@ -3,11 +3,9 @@ pipeline {
 
     environment {
         ECR_REGISTRY = "049061799945.dkr.ecr.ap-south-1.amazonaws.com"
-        IMAGE_REPO   = "microservice-ecommerce"    // your ECR repo name
+        IMAGE_REPO   = "microservice-ecommerce"
         IMAGE_TAG    = "${BUILD_NUMBER}"
-
-        // THIS IS THE ONLY SERVICE THAT GIVES PUBLIC URL
-        SERVICE_NAME = "frontend-external"         
+        SERVICE_NAME = "frontend-external"
         NAMESPACE    = "default"
     }
 
@@ -16,38 +14,38 @@ pipeline {
             steps { checkout scm }
         }
 
-        stage('Build & Push All Images') {
+        stage('Build & Push Images') {
             steps {
-                // Build and push every microservice image (adjust if you have separate repos)
-                sh """
-                docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:frontend-${IMAGE_TAG} -f src/frontend/Dockerfile src/frontend || true
-                docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:emailservice-${IMAGE_TAG} -f src/emailservice/Dockerfile src/emailservice || true
-                docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:checkoutservice-${IMAGE_TAG} -f src/checkoutservice/Dockerfile src/checkoutservice || true
-                # add more if you want...
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                                  credentialsId: 'aws-ecr-credentials',
+                                  accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                                  secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                    sh '''
+                    # Login to ECR
+                    aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
-                aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                    # Build and push the main services
+                    docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:frontend-${IMAGE_TAG} ./src/frontend
+                    docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:emailservice-${IMAGE_TAG} ./src/emailservice
+                    docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:checkoutservice-${IMAGE_TAG} ./src/checkoutservice
 
-                docker push ${ECR_REGISTRY}/${IMAGE_REPO}:frontend-${IMAGE_TAG} || true
-                docker push ${ECR_REGISTRY}/${IMAGE_REPO}:emailservice-${IMAGE_TAG} || true
-                docker push ${ECR_REGISTRY}/${IMAGE_REPO}:checkoutservice-${IMAGE_TAG} || true
-                """
+                    docker push ${ECR_REGISTRY}/${IMAGE_REPO}:frontend-${IMAGE_TAG}
+                    docker push ${ECR_REGISTRY}/${IMAGE_REPO}:emailservice-${IMAGE_TAG}
+                    docker push ${ECR_REGISTRY}/${IMAGE_REPO}:checkoutservice-${IMAGE_TAG}
+                    '''
+                }
             }
         }
 
-        stage('Update Manifest with New Tag') {
+        stage('Update Manifest & Deploy') {
             steps {
-                sh """
-                sed -i 's|image: .*|image: ${ECR_REGISTRY}/${IMAGE_REPO}:frontend-${IMAGE_TAG}|' kubernetes-manifest-file.yaml
-                sed -i 's|image: .*|image: ${ECR_REGISTRY}/${IMAGE_REPO}:emailservice-${IMAGE_TAG}|' kubernetes-manifest-file.yaml
-                sed -i 's|image: .*|image: ${ECR_REGISTRY}/${IMAGE_REPO}:checkoutservice-${IMAGE_TAG}|' kubernetes-manifest-file.yaml
-                # add more services if needed
-                """
-            }
-        }
+                sh '''
+                sed -i "s|image: .*frontend.*|image: ${ECR_REGISTRY}/${IMAGE_REPO}:frontend-${IMAGE_TAG}|" kubernetes-manifest-file.yaml
+                sed -i "s|image: .*emailservice.*|image: ${ECR_REGISTRY}/${IMAGE_REPO}:emailservice-${IMAGE_TAG}|" kubernetes-manifest-file.yaml
+                sed -i "s|image: .*checkoutservice.*|image: ${ECR_REGISTRY}/${IMAGE_REPO}:checkoutservice-${IMAGE_TAG}|" kubernetes-manifest-file.yaml
 
-        stage('Deploy to Kubernetes') {
-            steps {
-                sh 'kubectl apply -f kubernetes-manifest-file.yaml'
+                kubectl apply -f kubernetes-manifest-file.yaml
+                '''
             }
         }
     }
@@ -55,23 +53,19 @@ pipeline {
     post {
         success {
             script {
-                echo "Waiting for your public LoadBalancer IP (max 4 minutes)..."
-                timeout(time: 4, unit: 'MINUTES') {
+                echo "Waiting for your site to be live..."
+                timeout(time: 5, unit: 'MINUTES') {
                     waitUntil {
-                        def ip = sh(script: "kubectl get svc ${SERVICE_NAME} -n ${NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' --ignore-not-found", returnStdout: true).trim()
-                        return (ip != "")
+                        def url = sh(script: "kubectl get svc frontend-external -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' --ignore-not-found", returnStdout: true).trim()
+                        return (url != "")
                     }
                 }
-
-                def PUBLIC_IP = sh(script: "kubectl get svc ${SERVICE_NAME} -n ${NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].ip}'", returnStdout: true).trim()
-
-                echo "=================================================================="
-                echo "   YOUR ONLINE BOUTIQUE E-COMMERCE APP IS LIVE!"
-                echo ""
-                echo "   PUBLIC URL: http://${PUBLIC_IP}"
-                echo ""
-                echo "   Click or copy-paste this URL in your browser"
-                echo "=================================================================="
+                def URL = sh(script: "kubectl get svc frontend-external -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
+                echo "══════════════════════════════════════════════════════════"
+                echo "  YOUR FULL E-COMMERCE SITE IS NOW LIVE!"
+                echo "  → http://${URL}"
+                echo "  Click or copy the link above!"
+                echo "══════════════════════════════════════════════════════════"
             }
         }
     }
