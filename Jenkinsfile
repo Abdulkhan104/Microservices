@@ -17,6 +17,11 @@ pipeline {
                     usernamePassword(credentialsId: 'aws-secret-key', usernameVariable: 'DUMMY',                passwordVariable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
                     sh '''
+                    # THIS IS THE ONLY FIX — export the variables so AWS CLI sees them
+                    export AWS_ACCESS_KEY_ID
+                    export AWS_SECRET_ACCESS_KEY
+                    export AWS_DEFAULT_REGION=ap-south-1
+
                     aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
                     docker build -t ${ECR_REGISTRY}/${IMAGE_REPO}:frontend-${IMAGE_TAG} ./src/frontend
@@ -53,7 +58,7 @@ pipeline {
                 }
                 def URL = sh(script: "kubectl get svc frontend-external -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
                 echo "══════════════════════════════════════════════════════════"
-                echo "  YOUR E-COMMERCE SITE IS NOW LIVE!"
+                echo "  YOUR FULL E-COMMERCE SITE IS NOW LIVE!"
                 echo "  OPEN THIS URL → http://${URL}"
                 echo "══════════════════════════════════════════════════════════"
             }
