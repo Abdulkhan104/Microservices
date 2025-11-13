@@ -53,9 +53,8 @@ pipeline {
                 }
                 def URL = sh(script: "kubectl get svc frontend-external -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
                 echo "══════════════════════════════════════════════════════════"
-                echo "  CONGRATULATIONS! YOUR FULL E-COMMERCE SITE IS LIVE!"
-                echo "  URL: http://${URL}"
-                echo "  Click or copy → http://${URL}"
+                echo "  YOUR E-COMMERCE SITE IS NOW LIVE!"
+                echo "  OPEN THIS URL → http://${URL}"
                 echo "══════════════════════════════════════════════════════════"
             }
         }
